@@ -10,19 +10,25 @@ class ImageProcessor:
     def __init__(self):
         pass
 
-    def preprocess(self, image_path):
+    def preprocess(self, input_data):
         """
         Membaca citra dari path yang diberikan, mengubah ukurannya, dan menerapkan masking.
         
         Args:
-            image_path (str): Path ke file gambar.
+            input_data (str atau np.ndarray): Path file atau frame cv2.
             
         Returns:
             tuple: (original_img, gray_img, mask, masked_gray, masked_color)
                    Mengembalikan (None, ...) jika gambar tidak dapat dibaca.
         """
-        img = cv2.imread(image_path)
-        if img is None:
+        if isinstance(input_data, str):
+            img = cv2.imread(input_data)
+        elif isinstance(input_data, np.ndarray):
+            img = input_data.copy()
+        else:
+            return None, None, None, None, None
+            
+        if img is None or img.size == 0:
             return None, None, None, None, None
         
         # Ubah ukuran agar sesuai dengan input model (256x256) dan UI akan menyesuaikan
@@ -101,9 +107,11 @@ class ImageProcessor:
         largest_contour = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(largest_contour)
         
-        # 1. Cek Area Minimal (Citra 256x256 total 65536 piksel)
+        # 1. Cek Area Minimal dan Maksimal (Citra 256x256 total 65536 piksel)
         if area < 2000:
             return False, "Terlalu kecil"
+        if area > 52000:
+            return False, "Objek terlalu besar / terlalu dekat"
             
         # 2. Cek Aspect Ratio
         x, y, w, h = cv2.boundingRect(largest_contour)

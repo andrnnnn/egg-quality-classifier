@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                              QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, 
                              QFrame, QGraphicsDropShadowEffect)
 from PyQt5.QtGui import QPixmap, QImage, QColor
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from .image_processor import ImageProcessor
 from .classifier import EggClassifier
 
@@ -20,6 +20,12 @@ class EggQualityApp(QMainWindow):
         # Inisialisasi kelas helper
         self.image_processor = ImageProcessor()
         self.classifier = EggClassifier()
+        
+        # Inisialisasi Kamera
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_frame)
+        self.cap = None
+        self.camera_active = False
         
         # Pengaturan Window
         self.setFixedSize(1200, 950) 
@@ -149,8 +155,24 @@ class EggQualityApp(QMainWindow):
         self.btn_select.setFixedWidth(160)
         self.add_shadow(self.btn_select)
 
+        self.btn_camera = QPushButton("Buka Kamera")
+        self.btn_camera.setCursor(Qt.PointingHandCursor)
+        self.btn_camera.clicked.connect(self.toggle_camera)
+        self.btn_camera.setFixedWidth(160)
+        self.add_shadow(self.btn_camera)
+        
+        self.btn_capture = QPushButton("⚪ Ambil Foto")
+        self.btn_capture.setCursor(Qt.PointingHandCursor)
+        self.btn_capture.clicked.connect(self.capture_frame)
+        self.btn_capture.setFixedWidth(160)
+        self.btn_capture.setStyleSheet("background-color: #10B981; color: white;")
+        self.btn_capture.setVisible(False)
+        self.add_shadow(self.btn_capture)
+
         header_layout.addLayout(title_container)
         header_layout.addStretch()
+        header_layout.addWidget(self.btn_capture)
+        header_layout.addWidget(self.btn_camera)
         header_layout.addWidget(self.btn_select)
         
         self.main_layout.addLayout(header_layout)
@@ -313,7 +335,7 @@ class EggQualityApp(QMainWindow):
         if file_path:
             self.process_image(file_path)
 
-    def process_image(self, file_path):
+    def process_image(self, input_data):
         """
         Alur pemrosesan utama:
         1. Pra-pemrosesan citra
@@ -324,7 +346,7 @@ class EggQualityApp(QMainWindow):
         6. Prediksi dan perbarui hasil
         """
         # 1. Pra-pemrosesan Citra (Delegasi ke ImageProcessor)
-        img, gray, mask, masked_gray, masked_color = self.image_processor.preprocess(file_path)
+        img, gray, mask, masked_gray, masked_color = self.image_processor.preprocess(input_data)
         
         if img is None:
             QMessageBox.warning(self, "Error", "Tidak dapat membaca file gambar.")
@@ -388,6 +410,47 @@ class EggQualityApp(QMainWindow):
             self.lbl_prediction.setStyleSheet("font-size: 24px; font-weight: 600; color: #F59E0B; margin-left: 20px;")
         else:
             self.lbl_prediction.setStyleSheet("font-size: 24px; font-weight: 600; color: #EF4444; margin-left: 20px;")
+
+    def toggle_camera(self):
+        if not self.camera_active:
+            self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened():
+                QMessageBox.warning(self, "Error", "Tidak dapat mendeteksi atau membuka kamera.")
+                self.cap = None
+                return
+            self.camera_active = True
+            self.timer.start(30)  # 30 ms (sekitar 33 FPS)
+            self.btn_camera.setText("⏹️ Tutup Kamera")
+            self.btn_camera.setStyleSheet("background-color: #EF4444; color: white;")
+            self.btn_capture.setVisible(True)
+        else:
+            self.stop_camera()
+
+    def stop_camera(self):
+        self.timer.stop()
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        self.camera_active = False
+        self.btn_camera.setText("📷 Buka Kamera")
+        self.btn_camera.setStyleSheet("") # Revert to default stylesheet inheritance
+        self.btn_capture.setVisible(False)
+        self.lbl_original['label'].clear()
+
+    def update_frame(self):
+        if self.cap is not None and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if ret:
+                frame = cv2.flip(frame, 1) # Mirror effect
+                self.display_image(frame, self.lbl_original['label'], is_gray=False)
+
+    def capture_frame(self):
+        if self.camera_active and self.cap is not None:
+            ret, frame = self.cap.read()
+            if ret:
+                frame = cv2.flip(frame, 1)
+                self.stop_camera()
+                self.process_image(frame)
 
     def display_image(self, img_array, label_widget, is_gray=False):
         """Mengonversi citra CV2 ke QPixmap dan menampilkannya pada QLabel."""
