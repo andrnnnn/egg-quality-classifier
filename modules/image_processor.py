@@ -86,3 +86,42 @@ class ImageProcessor:
             h_mean = s_mean = v_mean = h_std = s_std = v_std = 0
 
         return [contrast, energy, homogeneity, correlation, h_mean, s_mean, v_mean, h_std, s_std, v_std]
+
+    def check_is_object_egg(self, mask):
+        """
+        Validasi heuristik untuk menentukan apakah mask objek adalah telur.
+        Berdasarkan luas area minimal dan bounding box aspect ratio.
+        """
+        # Ambil kontur untuk dianalisis
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return False, "Terlalu gelap/Tidak ada objek"
+            
+        # Temukan objek/kontur terbesar di dalam mask
+        largest_contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest_contour)
+        
+        # 1. Cek Area Minimal (Citra 256x256 total 65536 piksel)
+        if area < 2000:
+            return False, "Terlalu kecil"
+            
+        # 2. Cek Aspect Ratio
+        x, y, w, h = cv2.boundingRect(largest_contour)
+        if h == 0:
+            return False, "Area tidak valid"
+            
+        aspect_ratio = float(w) / h
+        if aspect_ratio < 0.4 or aspect_ratio > 2.5:
+            return False, "Bentuk bukan oval"
+            
+        # 3. Cek Kepadatan (Solidity)
+        # Telur adalah benda berbentuk cembung sempurna (convex).
+        # Jika solidity terlalu rendah, berarti bentuknya ada bolong/lekukan (misal postur tubuh manusia)
+        hull = cv2.convexHull(largest_contour)
+        hull_area = cv2.contourArea(hull)
+        if hull_area > 0:
+            solidity = float(area) / hull_area
+            if solidity < 0.85:
+                return False, "Benda memiliki lekukan (Bukan Telur)"
+        
+        return True, "Telur valid"

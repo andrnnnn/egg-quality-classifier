@@ -318,9 +318,10 @@ class EggQualityApp(QMainWindow):
         Alur pemrosesan utama:
         1. Pra-pemrosesan citra
         2. Tampilkan gambar
-        3. Ekstraksi fitur
-        4. Perbarui tabel
-        5. Prediksi dan perbarui hasil
+        3. Validasi Objek Telur
+        4. Ekstraksi fitur
+        5. Perbarui tabel
+        6. Prediksi dan perbarui hasil
         """
         # 1. Pra-pemrosesan Citra (Delegasi ke ImageProcessor)
         img, gray, mask, masked_gray, masked_color = self.image_processor.preprocess(file_path)
@@ -334,10 +335,31 @@ class EggQualityApp(QMainWindow):
         self.display_image(masked_gray, self.lbl_glcm['label'], is_gray=True)
         self.display_image(masked_color, self.lbl_hsv['label'])
 
-        # 3. Ekstraksi Fitur (Delegasi ke ImageProcessor)
+        # 3. Validasi Apakah Objek Adalah Telur
+        is_egg, reason = self.image_processor.check_is_object_egg(mask)
+        if not is_egg:
+            # Kosongkan tampilan fitur (set 0)
+            table_glcm_widget = self.table_glcm.findChild(QTableWidget)
+            for i in range(4):
+                val_item = QTableWidgetItem("0")
+                val_item.setTextAlignment(Qt.AlignCenter)
+                table_glcm_widget.setItem(i, 1, val_item)
+                
+            table_hsv_widget = self.table_hsv.findChild(QTableWidget)
+            for i in range(6):
+                val_item = QTableWidgetItem("0")
+                val_item.setTextAlignment(Qt.AlignCenter)
+                table_hsv_widget.setItem(i, 1, val_item)
+                
+            # Tampilkan peringatan di label prediksi
+            self.lbl_prediction.setText(f"Bukan Telur ({reason})")
+            self.lbl_prediction.setStyleSheet("font-size: 18px; font-weight: 600; color: #EF4444; margin-left: 20px;")
+            return
+
+        # 4. Ekstraksi Fitur (Delegasi ke ImageProcessor)
         features = self.image_processor.extract_features(img, gray, mask, masked_gray, masked_color)
         
-        # 4. Perbarui Tabel
+        # 5. Perbarui Tabel
         # Fitur GLCM (4 Pertama)
         table_glcm_widget = self.table_glcm.findChild(QTableWidget)
         for i in range(4):
