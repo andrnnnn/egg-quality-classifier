@@ -442,15 +442,29 @@ class EggQualityApp(QMainWindow):
             ret, frame = self.cap.read()
             if ret:
                 frame = cv2.flip(frame, 1) # Mirror effect
-                self.display_image(frame, self.lbl_original['label'], is_gray=False)
+                # Crop center agar menjadi kotak (karena kotak UI 300x300)
+                h, w = frame.shape[:2]
+                min_dim = min(h, w)
+                start_x = (w - min_dim) // 2
+                start_y = (h - min_dim) // 2
+                frame_square = frame[start_y:start_y+min_dim, start_x:start_x+min_dim]
+                
+                self.display_image(frame_square, self.lbl_original['label'], is_gray=False)
 
     def capture_frame(self):
         if self.camera_active and self.cap is not None:
             ret, frame = self.cap.read()
             if ret:
                 frame = cv2.flip(frame, 1)
+                # Crop center agar hasil foto juga proporsional kotak
+                h, w = frame.shape[:2]
+                min_dim = min(h, w)
+                start_x = (w - min_dim) // 2
+                start_y = (h - min_dim) // 2
+                frame_square = frame[start_y:start_y+min_dim, start_x:start_x+min_dim]
+                
                 self.stop_camera()
-                self.process_image(frame)
+                self.process_image(frame_square)
 
     def display_image(self, img_array, label_widget, is_gray=False):
         """Mengonversi citra CV2 ke QPixmap dan menampilkannya pada QLabel."""
