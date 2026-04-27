@@ -904,7 +904,7 @@ class EggQualityApp(QMainWindow):
         roi_params = self.roi_label.get_roi_params()
 
         # Stabilkan prediksi webcam dengan voting beberapa frame.
-        final_prediction = self._predict_webcam_stable(frame_square, roi_params, n_frames=5)
+        final_prediction = self._predict_webcam_stable(frame_square, roi_params, n_frames=3)
 
         self.stop_camera()
         self.process_image(
@@ -914,7 +914,7 @@ class EggQualityApp(QMainWindow):
             prediction_override=final_prediction
         )
 
-    def _predict_webcam_stable(self, first_frame_square, roi_params, n_frames=5):
+    def _predict_webcam_stable(self, first_frame_square, roi_params, n_frames=3):
         """
         Mengambil beberapa frame webcam dan melakukan majority voting agar
         prediksi tidak mudah berubah karena noise/lighting sesaat.
@@ -950,6 +950,9 @@ class EggQualityApp(QMainWindow):
             pred = self.classifier.predict(features)
             if pred in ("Baik", "Sedang", "Buruk"):
                 votes.append(pred)
+                # Early stop: jika 2 vote sudah sama, mayoritas tidak akan berubah.
+                if len(votes) >= 2 and votes[-1] == votes[-2]:
+                    break
 
         if not votes:
             return None

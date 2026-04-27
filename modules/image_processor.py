@@ -41,14 +41,15 @@ class ImageProcessor:
             # Webcam: pakai ROI + remove background + mask adaptif,
             # supaya yang tersisa benar-benar objek telur.
             roi_mask = self._create_static_roi_mask(img.shape[:2], roi_params)
-            img_fg, fg_mask = self.remove_background(img)
+            # Mode cepat untuk webcam agar inferensi lebih ringan.
+            img_fg, fg_mask = self.remove_background(img, iter_count=1, max_side=320)
             mask_raw = self.create_mask(img_fg)
             mask = cv2.bitwise_and(mask_raw, fg_mask)
             mask = cv2.bitwise_and(mask, roi_mask)
             solid_mask = self._create_solid_mask(mask)
         else:
             # Upload file: hapus background dulu agar objek telur lebih dominan.
-            img_fg, fg_mask = self.remove_background(img)
+            img_fg, fg_mask = self.remove_background(img, iter_count=3, max_side=640)
             mask_raw = self.create_mask(img_fg)
             mask = cv2.bitwise_and(mask_raw, fg_mask)
             solid_mask = self._create_solid_mask(mask)
@@ -61,7 +62,7 @@ class ImageProcessor:
 
         return img, gray, mask, masked_gray, masked_color
 
-    def remove_background(self, img):
+    def remove_background(self, img, iter_count=3, max_side=640):
         """
         Remove background berbasis GrabCut untuk gambar (upload/webcam).
         Mengembalikan:
@@ -73,32 +74,45 @@ class ImageProcessor:
             fg_mask = np.ones((h, w), dtype=np.uint8) * 255
             return img.copy(), fg_mask
 
+        work = img
+        scaled = False
+        if max(h, w) > max_side:
+            scale = max_side / float(max(h, w))
+            new_w = max(32, int(w * scale))
+            new_h = max(32, int(h * scale))
+            work = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            scaled = True
+
         # Inisialisasi GrabCut dengan rectangle menyisakan margin tepi.
-        gc_mask = np.zeros((h, w), np.uint8)
+        wh, ww = work.shape[:2]
+        gc_mask = np.zeros((wh, ww), np.uint8)
         bg_model = np.zeros((1, 65), np.float64)
         fg_model = np.zeros((1, 65), np.float64)
 
-        margin_x = max(5, int(w * 0.04))
-        margin_y = max(5, int(h * 0.04))
-        rect = (margin_x, margin_y, max(1, w - 2 * margin_x), max(1, h - 2 * margin_y))
+        margin_x = max(5, int(ww * 0.04))
+        margin_y = max(5, int(wh * 0.04))
+        rect = (margin_x, margin_y, max(1, ww - 2 * margin_x), max(1, wh - 2 * margin_y))
 
         try:
-            cv2.grabCut(img, gc_mask, rect, bg_model, fg_model, 3, cv2.GC_INIT_WITH_RECT)
+            cv2.grabCut(work, gc_mask, rect, bg_model, fg_model, iter_count, cv2.GC_INIT_WITH_RECT)
             fg_mask = np.where(
                 (gc_mask == cv2.GC_FGD) | (gc_mask == cv2.GC_PR_FGD), 255, 0
             ).astype(np.uint8)
         except Exception:
             # Fallback aman: jangan buang apapun kalau GrabCut gagal.
-            fg_mask = np.ones((h, w), dtype=np.uint8) * 255
+            fg_mask = np.ones((wh, ww), dtype=np.uint8) * 255
 
         # Rapikan mask foreground.
-        min_dim = max(1, min(h, w))
+        min_dim = max(1, min(wh, ww))
         k = max(3, int(min_dim * 0.012))
         if k % 2 == 0:
             k += 1
         kernel = np.ones((k, k), np.uint8)
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN, kernel, iterations=1)
         fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        if scaled:
+            fg_mask = cv2.resize(fg_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
         img_fg = cv2.bitwise_and(img, img, mask=fg_mask)
         return img_fg, fg_mask
@@ -325,8 +339,18 @@ class ImageProcessor:
         """
         # Fitur GLCM (Tekstur)
         if np.any(masked_gray > 0):
+            # Percepat GLCM pada resolusi tinggi dengan downsample terkontrol.
+            glcm_gray = masked_gray
+            gh, gw = glcm_gray.shape[:2]
+            max_glcm_side = 256
+            if max(gh, gw) > max_glcm_side:
+                scale = max_glcm_side / float(max(gh, gw))
+                new_w = max(32, int(gw * scale))
+                new_h = max(32, int(gh * scale))
+                glcm_gray = cv2.resize(glcm_gray, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
             glcm = graycomatrix(
-                masked_gray, [1],
+                glcm_gray, [1],
                 [0, np.pi / 4, np.pi / 2, 3 * np.pi / 4],
                 256, symmetric=True, normed=True
             )
