@@ -245,6 +245,7 @@ class EggQualityApp(QMainWindow):
                 btn.setStyleSheet(style)
             if not visible:
                 btn.setVisible(False)
+            btn.setFocusPolicy(Qt.NoFocus)  # Mencegah tombol merebut fokus spasi
             self.add_shadow(btn)
             return btn
 
@@ -534,7 +535,7 @@ class EggQualityApp(QMainWindow):
             
             # --- PENGATURAN KAMERA ---
             # Ubah angka 0 menjadi 1 atau 2 jika menggunakan kamera eksternal (misal: Iriun/DroidCam).
-            CAMERA_INDEX = 0 
+            CAMERA_INDEX = 1 
             self.cap = cv2.VideoCapture(CAMERA_INDEX)
             
             if not self.cap.isOpened():
@@ -672,3 +673,12 @@ class EggQualityApp(QMainWindow):
         """Reset ROI ke default dan perbarui tampilan jika sedang dalam mode jeda."""
         self.roi_label.reset_roi()
         self._redraw_frozen_frame()
+
+    def keyPressEvent(self, event):
+        """Menangani penekanan tombol keyboard. Tekan Spasi untuk Jeda/Resume kamera."""
+        if event.key() == Qt.Key_Space:
+            if self.camera_active:
+                self.toggle_pause()
+                event.accept()
+        else:
+            super().keyPressEvent(event)
