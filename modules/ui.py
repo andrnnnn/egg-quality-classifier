@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog,
@@ -530,7 +531,12 @@ class EggQualityApp(QMainWindow):
     def toggle_camera(self):
         """Membuka atau menutup kamera."""
         if not self.camera_active:
-            self.cap = cv2.VideoCapture(0)
+            
+            # --- PENGATURAN KAMERA ---
+            # Ubah angka 0 menjadi 1 atau 2 jika menggunakan kamera eksternal (misal: Iriun/DroidCam).
+            CAMERA_INDEX = 0 
+            self.cap = cv2.VideoCapture(CAMERA_INDEX)
+            
             if not self.cap.isOpened():
                 QMessageBox.warning(self, "Error", "Tidak dapat mendeteksi atau membuka kamera.")
                 self.cap = None
@@ -591,7 +597,11 @@ class EggQualityApp(QMainWindow):
         if not ret:
             return
 
+        # --- PENGATURAN EFEK CERMIN (MIRROR) ---
+        # Gunakan cv2.flip jika ingin tampilan seperti cermin (kiri jadi kanan).
+        # Hapus/beri tanda pagar (#) pada baris di bawah jika Anda memfoto benda bersisi tulisan agar tidak terbalik.
         frame = cv2.flip(frame, 1)
+        
         h, w = frame.shape[:2]
         min_dim = min(h, w)
         sx, sy = (w - min_dim) // 2, (h - min_dim) // 2
@@ -611,7 +621,11 @@ class EggQualityApp(QMainWindow):
             ret, frame = self.cap.read()
             if not ret:
                 return
+                
+            # --- PENGATURAN EFEK CERMIN (MIRROR) ---
+            # Pastikan pengaturan di sini sama persis dengan yang ada di fungsi update_frame() di atas.
             frame = cv2.flip(frame, 1)
+            
             h, w = frame.shape[:2]
             min_dim = min(h, w)
             sx, sy = (w - min_dim) // 2, (h - min_dim) // 2
@@ -626,14 +640,27 @@ class EggQualityApp(QMainWindow):
     # =========================================================================
 
     def _draw_roi_and_show(self, frame):
-        """Menggambar elips ROI pada frame dan menampilkannya di panel kamera."""
+        """Menggambar efek viewfinder (luar gelap, dalam terang) pada panel kamera."""
         display = frame.copy()
         h, w = display.shape[:2]
         cx = int(w * self.roi_label.roi_cx)
         cy = int(h * self.roi_label.roi_cy)
         ax = int(w * self.roi_label.roi_ax)
         ay = int(h * self.roi_label.roi_ay)
-        cv2.ellipse(display, (cx, cy), (ax, ay), 0, 0, 360, (0, 255, 0), 2)
+
+        # 1. Buat versi gelap dari frame asli (Opacity 40%)
+        dark_frame = cv2.addWeighted(display, 0.5, np.zeros_like(display), 0, 0)
+
+        # 2. Buat mask untuk area dalam oval
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.ellipse(mask, (cx, cy), (ax, ay), 0, 0, 360, 255, -1)
+
+        # 3. Gabungkan: dalam oval = terang, luar oval = gelap
+        display = np.where(mask[:, :, np.newaxis] == 255, display, dark_frame)
+
+        # 4. Gambar garis tepi oval (putih sedikit kehijauan)
+        cv2.ellipse(display, (cx, cy), (ax, ay), 0, 0, 360, (200, 255, 200), 2)
+
         self.display_image(display, self.lbl_original['label'], is_gray=False)
 
     def _redraw_frozen_frame(self):

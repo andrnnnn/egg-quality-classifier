@@ -40,8 +40,29 @@ class ImageProcessor:
         img = cv2.resize(img, (256, 256))
 
         if source_type == 'webcam':
-            mask = self._create_static_roi_mask(roi_params)
-            solid_mask = mask.copy()
+            # Gunakan ROI sebagai "Bounding Box" untuk fokus memotong gambar
+            h_img, w_img = img.shape[:2]
+            cx, cy = int(roi_params['cx_pct'] / 100 * w_img), int(roi_params['cy_pct'] / 100 * h_img)
+            ax, ay = int(roi_params['ax_pct'] / 100 * w_img), int(roi_params['ay_pct'] / 100 * h_img)
+            
+            # Beri margin 5 piksel agar garis tepi objek tidak terpotong pas
+            x1 = max(0, cx - ax - 5)
+            y1 = max(0, cy - ay - 5)
+            x2 = min(w_img, cx + ax + 5)
+            y2 = min(h_img, cy + ay + 5)
+            
+            roi_img = img[y1:y2, x1:x2]
+            
+            # Gunakan Canny Edge (Dynamic Masking) hanya pada area ROI
+            roi_mask = self.create_mask(roi_img)
+            roi_solid = self._create_solid_mask(roi_mask)
+            
+            # Kembalikan mask ke ukuran penuh 256x256
+            mask = np.zeros((h_img, w_img), dtype=np.uint8)
+            mask[y1:y2, x1:x2] = roi_mask
+            
+            solid_mask = np.zeros((h_img, w_img), dtype=np.uint8)
+            solid_mask[y1:y2, x1:x2] = roi_solid
         else:
             mask = self.create_mask(img)
             solid_mask = self._create_solid_mask(mask)
@@ -54,18 +75,41 @@ class ImageProcessor:
 
     def create_mask(self, img):
         """
-        Membuat binary mask dengan Otsu Thresholding pada channel Saturation HSV.
-        Digunakan untuk input gambar dari file.
+        [VERSI TESTING]
+        Membuat binary mask dengan metode Edge Detection (Canny) & Contour Filling.
+        Metode ini sangat ampuh jika warna telur pucat dan background memiliki teks/bertekstur.
         """
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        s_channel = hsv[:, :, 1]
-        s_blur = cv2.GaussianBlur(s_channel, (5, 5), 0)
+        # 1. Konversi ke Grayscale dan beri Blur untuk mengurangi noise tekstur kertas
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (7, 7), 0)
 
-        _, mask = cv2.threshold(s_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # 2. Canny Edge Detection untuk mencari garis batas tepi telur
+        edges = cv2.Canny(blur, 30, 150)
 
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+        # 3. Morphological Close untuk menyambungkan garis putus-putus di tepi telur
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        closed_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=3)
+
+        # 4. Cari semua kontur dan isi bagian dalam kontur terluar (telur)
+        mask = np.zeros_like(gray)
+        contours, _ = cv2.findContours(closed_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # Ambil objek dengan area garis batas terbesar (pasti telur)
+            largest_contour = max(contours, key=cv2.contourArea)
+            
+            # Isi area di dalam kontur terbesar (TANPA HULL agar bentuk aslinya terlihat untuk validasi lekukan)
+            cv2.drawContours(mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+
+        # 5. Pembersihan sisa-sisa sedikit di ujungnya
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        
+        # 6. PENYUSUTAN MASK (Erosion)
+        # Langkah ini sangat penting untuk menghilangkan sisa pinggiran kertas putih/bayangan
+        # yang ikut terambil oleh Canny Edge. Mask akan dikecilkan beberapa piksel ke dalam.
+        erode_kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.erode(mask, erode_kernel, iterations=3)
+        
         return mask
 
     def _create_static_roi_mask(self, roi_params=None):
@@ -177,17 +221,28 @@ class ImageProcessor:
             return False, "Objek terlalu besar / terlalu dekat"
 
         x, y, w, h = cv2.boundingRect(largest_contour)
-        if h == 0:
+        if h == 0 or w == 0:
             return False, "Area tidak valid"
 
         aspect_ratio = float(w) / h
-        if aspect_ratio < 0.4 or aspect_ratio > 2.5:
-            return False, "Bentuk bukan oval"
+        if aspect_ratio < 0.5 or aspect_ratio > 2.0:
+            return False, "Bentuk terlalu lonjong (Bukan Telur)"
+            
+        # Pengecekan Extent (Area dibandingkan dengan Bounding Box Area)
+        # Telur (oval) memiliki extent sekitar 0.78 (pi/4).
+        bounding_box_area = w * h
+        extent = float(area) / bounding_box_area
+        if extent > 0.86:
+            return False, "Bentuk persegi/kotak (Bukan Telur)"
+        if extent < 0.60:
+            return False, "Bentuk terlalu runcing/tipis (Bukan Telur)"
 
         hull = cv2.convexHull(largest_contour)
         hull_area = cv2.contourArea(hull)
-        if hull_area > 0 and float(area) / hull_area < 0.85:
-            return False, "Benda memiliki lekukan (Bukan Telur)"
+        
+        # Tolak benda dengan banyak lekukan/bentuk aneh (seperti hewan/jari tangan)
+        if hull_area > 0 and float(area) / hull_area < 0.88:
+            return False, "Benda memiliki lekukan/Bentuk tidak beraturan (Bukan Telur)"
 
         return True, "Geometri valid"
 
@@ -203,12 +258,20 @@ class ImageProcessor:
         mean_h = h[area].mean()
         mean_s = s[area].mean()
 
+        # Tolak objek hitam-putih murni (seperti bola sepak)
+        if mean_s < 5:
+            return False, "Warna hitam putih / Tidak ada rona coklat (Bukan Telur Puyuh)"
+
         # Tolak warna hijau–biru–ungu pekat (bukan warna alami telur puyuh)
         if 70 < mean_h < 180 and mean_s > 60:
             return False, "Warna tidak wajar (Bukan Telur)"
 
-        # Tolak warna terlalu jenuh (plastik, bola, dsb.)
+        # Tolak warna terlalu jenuh (plastik, mainan, dsb.)
+        # Pengecualian HANYA untuk kuning telur natural (Hue 20-45) dan Saturasi tidak boleh full mentok (>220).
         if mean_s > 150:
-            return False, "Warna terlalu pekat (Bukan Telur)"
+            if 20 < mean_h < 45 and mean_s < 220:
+                pass # Loloskan telur tanpa cangkang
+            else:
+                return False, "Warna terlalu pekat / Bukan Telur Puyuh"
 
         return True, "Warna valid"
